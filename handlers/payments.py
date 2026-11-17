@@ -6,6 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from aiogram import Router, F, Bot
+from aiogram.filters import Command
 from aiogram.types import (
     Message,
     CallbackQuery,
