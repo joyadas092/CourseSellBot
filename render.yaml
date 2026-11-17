@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: coursesellbot
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    autoDeploy: true
