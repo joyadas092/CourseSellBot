@@ -47,8 +47,8 @@ logger = logging.getLogger("CourseSellBot")
 web_app = FastAPI(title="CourseSellBot Service", docs_url=None, redoc_url=None)
 
 
-@web_app.get("/")
-@web_app.get("/health")
+@web_app.api_route("/", methods=["GET", "HEAD"])
+@web_app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return JSONResponse({
         "status": "healthy",
