@@ -27,17 +27,23 @@ def build_admin_main_keyboard() -> InlineKeyboardMarkup:
 def build_admin_join_promo_keyboard(promo_settings: Dict[str, Any]) -> InlineKeyboardMarkup:
     """Keyboard for configuring external channel join request promotions."""
     is_enabled = promo_settings.get("enabled", True)
-    is_auto = promo_settings.get("auto_approve", True)
+    delay_sec = int(promo_settings.get("delay_seconds", 0))
     has_banner = bool(promo_settings.get("banner_file_id"))
 
     toggle_btn = "🔴 Turn OFF Promo" if is_enabled else "🟢 Turn ON Promo"
-    auto_btn = "⚡ Auto-Approve: ON" if is_auto else "⚡ Auto-Approve: OFF"
+    if delay_sec <= 0:
+        delay_btn = "⚡ Delay: Instant"
+    elif delay_sec < 60:
+        delay_btn = f"⏱️ Delay: {delay_sec}s"
+    else:
+        delay_btn = f"⏱️ Delay: {delay_sec // 60}m"
+
     banner_btn = "🖼️ Change Banner" if has_banner else "🖼️ Add Banner Photo"
 
     keyboard = [
         [
             InlineKeyboardButton(text=toggle_btn, callback_data="adm_jp_toggle_enabled"),
-            InlineKeyboardButton(text=auto_btn, callback_data="adm_jp_toggle_auto")
+            InlineKeyboardButton(text=delay_btn, callback_data="adm_jp_select_delay")
         ],
         [
             InlineKeyboardButton(text="📝 Edit Promo Text", callback_data="adm_jp_edit_text"),
@@ -55,6 +61,27 @@ def build_admin_join_promo_keyboard(promo_settings: Dict[str, Any]) -> InlineKey
         InlineKeyboardButton(text="🔙 Back to Dashboard", callback_data="adm_main_menu")
     ])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def build_admin_promo_delay_keyboard() -> InlineKeyboardMarkup:
+    """Select interval after which bot sends message to external join request users."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⚡ Instant (0 sec)", callback_data="adm_jp_setdelay:0"),
+            InlineKeyboardButton(text="⏱️ 30 Seconds", callback_data="adm_jp_setdelay:30")
+        ],
+        [
+            InlineKeyboardButton(text="⏱️ 1 Minute", callback_data="adm_jp_setdelay:60"),
+            InlineKeyboardButton(text="⏱️ 2 Minutes", callback_data="adm_jp_setdelay:120")
+        ],
+        [
+            InlineKeyboardButton(text="⏱️ 5 Minutes", callback_data="adm_jp_setdelay:300"),
+            InlineKeyboardButton(text="⏱️ 10 Minutes", callback_data="adm_jp_setdelay:600")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Back to Promo Setup", callback_data="adm_join_promo")
+        ]
+    ])
 
 
 def build_admin_folders_list(folders: List[Dict[str, Any]]) -> InlineKeyboardMarkup:

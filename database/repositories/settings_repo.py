@@ -59,7 +59,7 @@ class SettingsRepository:
         )
         return {
             "enabled": await cls.get_setting("join_promo_enabled", True),
-            "auto_approve": await cls.get_setting("join_promo_auto_approve", True),
+            "delay_seconds": int(await cls.get_setting("join_promo_delay_seconds", 0)),
             "text": await cls.get_setting("join_promo_text", default_text),
             "banner_file_id": await cls.get_setting("join_promo_banner", None)
         }
@@ -69,7 +69,7 @@ class SettingsRepository:
         """Update a specific join promo setting."""
         key_map = {
             "enabled": "join_promo_enabled",
-            "auto_approve": "join_promo_auto_approve",
+            "delay_seconds": "join_promo_delay_seconds",
             "text": "join_promo_text",
             "banner": "join_promo_banner"
         }

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from datetime import datetime, timezone
 from aiogram import Bot
@@ -104,21 +105,44 @@ class ExpiryService:
                 except Exception as e:
                     logger.warning(f"Failed to send expiry notification to user {user_id}: {e}")
 
-                # Notify Log Channel / Admins
-                if settings.LOG_CHANNEL_ID:
+                # Notify Admins and Log Channel of expiry & kick
+                user_display = html.escape(sub.get("full_name") or "Anonymous")
+                username = sub.get("username")
+                if username:
+                    user_display += f" (@{username})"
+
+                plan_label = sub.get("plan_label", "Access")
+                days = sub.get("days", 0)
+
+                if is_demo:
+                    admin_alert = (
+                        "⏱️ <b>Demo Trial Ended & User Removed</b> 🚪\n\n"
+                        f"👤 <b>User:</b> {user_display}\n"
+                        f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+                        f"📦 <b>Course:</b> {html.escape(folder_title)}\n"
+                        "⏳ <b>Status:</b> 2-Minute Demo Completed & Removed from Group\n"
+                        f"📅 <b>Timestamp:</b> <code>{now.strftime('%d %b %Y, %H:%M UTC')}</code>"
+                    )
+                else:
+                    admin_alert = (
+                        "🚪 <b>Subscription Expired & Member Removed</b> ⚠️\n\n"
+                        f"👤 <b>User:</b> {user_display}\n"
+                        f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+                        f"📦 <b>Course:</b> {html.escape(folder_title)}\n"
+                        f"💎 <b>Plan:</b> {html.escape(plan_label)} ({days} Days)\n"
+                        "⏳ <b>Status:</b> 🔴 Expired & Removed from VIP Group\n"
+                        f"📅 <b>Expired At:</b> <code>{now.strftime('%d %b %Y, %H:%M UTC')}</code>"
+                    )
+
+                admin_targets = list(settings.ADMIN_IDS)
+                if settings.LOG_CHANNEL_ID and settings.LOG_CHANNEL_ID not in admin_targets:
+                    admin_targets.append(settings.LOG_CHANNEL_ID)
+
+                for adm_id in admin_targets:
                     try:
-                        await bot.send_message(
-                            chat_id=settings.LOG_CHANNEL_ID,
-                            text=(
-                                f"📤 <b>{'Demo ' if is_demo else ''}Member Expired & Removed</b>\n\n"
-                                f"• Course: <b>{folder_title}</b>\n"
-                                f"• User ID: <code>{user_id}</code>\n"
-                                f"• Chat: <code>{chat_id}</code>\n"
-                                f"• Action: Removed from private chat."
-                            )
-                        )
-                    except Exception:
-                        pass
+                        await bot.send_message(chat_id=adm_id, text=admin_alert)
+                    except Exception as err:
+                        logger.debug(f"Could not deliver expiry alert to {adm_id}: {err}")
 
             # Skip advance reminders for 2-minute demo plans
             elif is_demo:

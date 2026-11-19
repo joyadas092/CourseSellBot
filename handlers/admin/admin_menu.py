@@ -12,7 +12,11 @@ from database.repositories.subscription_repo import SubscriptionRepository
 from database.repositories.payment_repo import PaymentRepository
 from database.repositories.user_repo import UserRepository
 from database.repositories.settings_repo import SettingsRepository
-from keyboards.admin_kb import build_admin_main_keyboard, build_admin_join_promo_keyboard
+from keyboards.admin_kb import (
+    build_admin_main_keyboard,
+    build_admin_join_promo_keyboard,
+    build_admin_promo_delay_keyboard
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,8 @@ async def build_status_dashboard_text() -> str:
 
     promo_settings = await SettingsRepository.get_join_promo_settings()
     promo_status = "🟢 Enabled (Active)" if promo_settings.get("enabled", True) else "🔴 Disabled (Off)"
-    promo_auto = "⚡ Auto-Approve: ON" if promo_settings.get("auto_approve", True) else "⚡ Auto-Approve: OFF"
+    delay_sec = int(promo_settings.get("delay_seconds", 0))
+    delay_lbl = "Instant" if delay_sec == 0 else f"{delay_sec}s" if delay_sec < 60 else f"{delay_sec // 60}m"
 
     rzp_status = "🟢 Active" if settings.RAZORPAY_KEY_ID else "⚪ Not Configured"
     pp_status = "🟢 Active" if settings.PAYPAL_CLIENT_ID else "⚪ Not Configured"
@@ -68,7 +73,7 @@ async def build_status_dashboard_text() -> str:
         f"• <b>Total Revenue (INR):</b> ₹<code>{total_revenue_inr:,.2f}</code>\n"
         f"• <b>Total Paid Orders:</b> <code>{total_paid_orders:,}</code>\n\n"
         "🌐 <b>Promotion & Gateway Status:</b>\n"
-        f"• <b>Join Request Promo:</b> <code>{promo_status}</code> ({promo_auto})\n"
+        f"• <b>Join Request Promo:</b> <code>{promo_status}</code> (Delay: <code>{delay_lbl}</code>)\n"
         f"• <b>Razorpay UPI QR:</b> <code>{rzp_status}</code>\n"
         f"• <b>PayPal:</b> <code>{pp_status}</code>\n"
         "• <b>Telegram Stars:</b> <code>🟢 Active</code>\n"
@@ -315,15 +320,21 @@ async def cb_adm_join_promo(callback: CallbackQuery, state: FSMContext = None):
         await state.clear()
     promo = await SettingsRepository.get_join_promo_settings()
     st = "🟢 Enabled (Active)" if promo.get("enabled", True) else "🔴 Disabled (Off)"
-    ap = "🟢 ON (Instant Entry)" if promo.get("auto_approve", True) else "🔴 OFF (Manual)"
+    delay_sec = int(promo.get("delay_seconds", 0))
+    if delay_sec <= 0:
+        delay_display = "⚡ Instant (0 sec)"
+    elif delay_sec < 60:
+        delay_display = f"⏱️ {delay_sec} Seconds"
+    else:
+        delay_display = f"⏱️ {delay_sec // 60} Minutes"
     banner_st = "✅ Photo Attached" if promo.get("banner_file_id") else "❌ No Photo (Text Only)"
 
     text = (
         "📣 <b>Join Request Welcome Promotion Setup</b>\n\n"
         "When the bot is added as an Admin in external channels/groups, "
-        "it can auto-approve join requests and send users a private promotional DM showcasing what you offer!\n\n"
+        "it detects users who send a join request and delivers your customized promotional DM showcasing what you offer!\n\n"
         f"• <b>Promo Status:</b> <code>{st}</code>\n"
-        f"• <b>Auto-Approve Joins:</b> <code>{ap}</code>\n"
+        f"• <b>Send Delay Interval:</b> <code>{delay_display}</code>\n"
         f"• <b>Banner Media:</b> <code>{banner_st}</code>\n\n"
         "📝 <b>Current Message Template:</b>\n"
         f"<blockquote>{promo.get('text', '')[:350]}...</blockquote>\n\n"
@@ -347,14 +358,29 @@ async def cb_adm_jp_toggle_enabled(callback: CallbackQuery):
     await cb_adm_join_promo(callback, state=None)
 
 
-@router.callback_query(F.data == "adm_jp_toggle_auto")
-async def cb_adm_jp_toggle_auto(callback: CallbackQuery):
+@router.callback_query(F.data == "adm_jp_select_delay")
+async def cb_adm_jp_select_delay(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
-    promo = await SettingsRepository.get_join_promo_settings()
-    new_val = not promo.get("auto_approve", True)
-    await SettingsRepository.set_join_promo_setting("auto_approve", new_val)
-    await callback.answer(f"Auto-Approve is now {'ON' if new_val else 'OFF'}!")
+    text = (
+        "⏱️ <b>Set Join Request Promo Delay Interval</b>\n\n"
+        "How much time should the bot wait before sending the promotional message to the user who requested to join?\n\n"
+        "• <b>Instant:</b> Sends immediately when they tap Join\n"
+        "• <b>Delay (30s - 10m):</b> Waits the specified interval before sending the offer DM\n\n"
+        "👇 <i>Select an interval below:</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=build_admin_promo_delay_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm_jp_setdelay:"))
+async def cb_adm_jp_setdelay(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    sec = int(callback.data.split(":")[1])
+    await SettingsRepository.set_join_promo_setting("delay_seconds", sec)
+    lbl = "Instant" if sec == 0 else f"{sec}s" if sec < 60 else f"{sec // 60}m"
+    await callback.answer(f"Promo delay set to: {lbl}!")
     await cb_adm_join_promo(callback, state=None)
 
 

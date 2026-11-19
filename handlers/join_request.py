@@ -1,13 +1,4 @@
-import logging
-from aiogram import Router
-from aiogram.types import ChatJoinRequest
-from services.invite_service import InviteService
-
-logger = logging.getLogger(__name__)
-
-router = Router(name="join_request_router")
-
-
+import asyncio
 import html
 import logging
 from aiogram import Router, Bot
@@ -17,7 +8,6 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from config import settings
 from database.repositories.folder_repo import FolderRepository
 from database.repositories.settings_repo import SettingsRepository
-from database.repositories.user_repo import UserRepository
 from services.invite_service import InviteService
 
 logger = logging.getLogger(__name__)
@@ -25,17 +15,75 @@ logger = logging.getLogger(__name__)
 router = Router(name="join_request_router")
 
 
+async def _deliver_promo_dm(
+    bot: Bot,
+    user_id: int,
+    user_first_name: str,
+    channel_title: str,
+    promo_settings: dict,
+    delay_seconds: int = 0
+) -> None:
+    """Delivers promotional welcome message to user's DM after optional delay."""
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
+
+    try:
+        bot_user = await bot.get_me()
+        bot_username = bot_user.username or settings.BOT_USERNAME
+
+        user_name = html.escape(user_first_name or "Friend")
+        raw_text = promo_settings.get("text", "")
+        text = raw_text.replace("{name}", user_name).replace("{channel}", html.escape(channel_title))
+
+        promo_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🛍️ Explore All Courses & VIP Access",
+                    url=f"https://t.me/{bot_username}?start=catalog"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Contact Support",
+                    url=f"https://t.me/{settings.SUPPORT_USERNAME}"
+                )
+            ]
+        ])
+
+        banner_file_id = promo_settings.get("banner_file_id")
+        if banner_file_id:
+            await bot.send_photo(
+                chat_id=user_id,
+                photo=banner_file_id,
+                caption=text,
+                reply_markup=promo_kb
+            )
+        else:
+            await bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=promo_kb,
+                disable_web_page_preview=True
+            )
+        logger.info(f"Delivered external join promo DM to user {user_id} (delay: {delay_seconds}s)")
+    except TelegramForbiddenError:
+        logger.debug(f"Cannot deliver promo DM to {user_id}: User has not started bot or blocked bot.")
+    except Exception as e:
+        logger.warning(f"Failed to deliver promo DM to {user_id}: {e}")
+
+
 @router.chat_join_request()
 async def on_chat_join_request(request: ChatJoinRequest):
     """
-    Handles ChatJoinRequest intelligently:
-    1. If the request is for one of our own VIP Course/Group chats:
+    Handles ChatJoinRequest:
+    1. If request is for one of our official VIP Course groups/channels:
        - Strictly verifies buyer / demo validity via InviteService.
        - Does NOT scan or send marketing promo messages here.
-    2. If the request is from an External Channel/Group where the bot is Admin:
-       - Automatically registers the user into the database.
-       - Optionally auto-approves their join request.
-       - Sends our customized Promotional Welcome DM with courses & offers (if enabled in Admin Panel).
+    2. If request is from an External Channel/Group where bot is Admin:
+       - Does NOT approve or alter the join request (stays pending).
+       - Does NOT save dummy users to DB.
+       - Sends the customized Promotional Welcome DM with courses & offers
+         after the configured interval/delay.
     """
     chat_id = request.chat.id
     from_user = request.from_user
@@ -60,78 +108,23 @@ async def on_chat_join_request(request: ChatJoinRequest):
         # Case 2: This is an EXTERNAL Group/Channel where bot is added as Admin
         promo_settings = await SettingsRepository.get_join_promo_settings()
         is_promo_enabled = promo_settings.get("enabled", True)
-        should_auto_approve = promo_settings.get("auto_approve", True)
-
-        # 1. Register user in database
-        try:
-            await UserRepository.get_or_create(
-                user_id=user_id,
-                username=from_user.username,
-                full_name=from_user.full_name
-            )
-        except Exception as e:
-            logger.debug(f"Could not register user {user_id} in UserRepository: {e}")
-
-        # 2. Auto-approve join request if enabled
-        if should_auto_approve:
-            try:
-                await request.approve()
-                logger.info(f"Auto-approved external join request for user {user_id} in chat {chat_id}")
-            except Exception as e:
-                logger.debug(f"Could not auto-approve join request in {chat_id}: {e}")
-
-        # 3. If promotional message is disabled, stop here
         if not is_promo_enabled:
             return
 
-        # 4. Prepare and deliver promotional welcome post in user's DM
-        bot_user = await bot.get_me()
-        bot_username = bot_user.username or settings.BOT_USERNAME
-
+        delay_seconds = int(promo_settings.get("delay_seconds", 0))
         channel_title = request.chat.title or "our channel"
-        user_name = html.escape(from_user.first_name or "Friend")
 
-        raw_text = promo_settings.get("text", "")
-        # Replace variables
-        text = raw_text.replace("{name}", user_name).replace("{channel}", html.escape(channel_title))
-
-        promo_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🛍️ Explore All Courses & VIP Access",
-                    url=f"https://t.me/{bot_username}?start=catalog"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💬 Contact Support",
-                    url=f"https://t.me/{settings.SUPPORT_USERNAME}"
-                )
-            ]
-        ])
-
-        banner_file_id = promo_settings.get("banner_file_id")
-        try:
-            if banner_file_id:
-                await bot.send_photo(
-                    chat_id=user_id,
-                    photo=banner_file_id,
-                    caption=text,
-                    reply_markup=promo_kb
-                )
-            else:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=text,
-                    reply_markup=promo_kb,
-                    disable_web_page_preview=True
-                )
-            logger.info(f"Delivered external join promo DM to user {user_id} from chat {chat_id}")
-        except TelegramForbiddenError:
-            # User has not initiated conversation with bot or has blocked bot
-            logger.debug(f"Cannot deliver promo DM to {user_id}: User has not started bot or blocked bot.")
-        except Exception as e:
-            logger.warning(f"Failed to deliver promo DM to {user_id}: {e}")
+        # Dispatch async background task for delayed/instant DM delivery
+        asyncio.create_task(
+            _deliver_promo_dm(
+                bot=bot,
+                user_id=user_id,
+                user_first_name=from_user.first_name,
+                channel_title=channel_title,
+                promo_settings=promo_settings,
+                delay_seconds=delay_seconds
+            )
+        )
 
     except Exception as e:
         logger.error(f"Error handling chat join request for chat {chat_id}: {e}", exc_info=True)
