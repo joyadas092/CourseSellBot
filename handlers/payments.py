@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import random
 import string
@@ -224,6 +225,22 @@ async def cb_confirm_demo(callback: CallbackQuery):
             await callback.bot.send_message(chat_id=msg.chat.id, text=msg_text, reply_markup=join_kb)
 
     await callback.answer("Demo activated! Tap the link to join.", show_alert=False)
+
+    # Notify all admins & log channel of demo claim
+    await send_admin_subscription_alert(
+        bot=callback.bot,
+        user_id=user_id,
+        username=callback.from_user.username,
+        full_name=callback.from_user.full_name,
+        folder_title=folder["title"],
+        plan_label="Free Demo (2 Mins)",
+        days=0,
+        amount=0.0,
+        currency="FREE",
+        gateway="free_demo",
+        pay_ref=pay_ref,
+        is_demo=True
+    )
 
 
 # ==========================================
@@ -701,6 +718,66 @@ async def cb_cancelpay(callback: CallbackQuery):
     await callback.answer("Payment cancelled.")
 
 
+async def send_admin_subscription_alert(
+    bot: Bot,
+    user_id: int,
+    username: str = None,
+    full_name: str = None,
+    folder_title: str = "VIP Access",
+    plan_label: str = "Plan",
+    days: int = 30,
+    amount: float = 0.0,
+    currency: str = "INR",
+    gateway: str = "payment",
+    pay_ref: str = "N/A",
+    valid_until: datetime = None,
+    is_demo: bool = False
+) -> None:
+    """Delivers rich real-time subscription notifications to all superadmins and the log channel."""
+    valid_str = (
+        valid_until.strftime("%d %b %Y, %H:%M UTC")
+        if isinstance(valid_until, datetime)
+        else (str(valid_until) if valid_until else "N/A")
+    )
+    user_name_esc = html.escape(full_name or "Anonymous")
+    user_display = f"{user_name_esc}"
+    if username:
+        user_display += f" (@{username})"
+
+    if is_demo:
+        alert_text = (
+            "🎁 <b>Free Demo Trial Claimed!</b> ⚡\n\n"
+            f"👤 <b>User:</b> {user_display}\n"
+            f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+            f"📦 <b>Course:</b> {html.escape(folder_title)}\n"
+            "⏱️ <b>Trial Duration:</b> <code>2 Minutes (120s)</code>\n"
+            f"🔖 <b>Ref:</b> <code>{pay_ref}</code>"
+        )
+    else:
+        alert_text = (
+            "🔔 <b>New Plan Subscription!</b> 💎\n\n"
+            f"👤 <b>Subscriber:</b> {user_display}\n"
+            f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+            f"📦 <b>Course:</b> {html.escape(folder_title)}\n"
+            f"💎 <b>Plan:</b> {html.escape(plan_label)} ({days} Days)\n"
+            f"💰 <b>Amount Paid:</b> <code>{amount} {currency}</code>\n"
+            f"💳 <b>Gateway:</b> <code>{gateway}</code>\n"
+            f"⏳ <b>Valid Until:</b> <code>{valid_str}</code>\n"
+            f"🔖 <b>Payment Ref:</b> <code>{pay_ref}</code>"
+        )
+
+    # Gather targets
+    target_ids = list(settings.ADMIN_IDS)
+    if settings.LOG_CHANNEL_ID and settings.LOG_CHANNEL_ID not in target_ids:
+        target_ids.append(settings.LOG_CHANNEL_ID)
+
+    for target in target_ids:
+        try:
+            await bot.send_message(chat_id=target, text=alert_text)
+        except Exception as e:
+            logger.debug(f"Could not deliver admin subscription alert to {target}: {e}")
+
+
 async def activate_access_for_user(
     bot: Bot,
     user_id: int,
@@ -796,22 +873,106 @@ async def activate_access_for_user(
     except Exception as e:
         logger.error(f"Failed to send confirmation to user {user_id}: {e}")
 
-    # 5. Notify Log Channel / Admin
-    if settings.LOG_CHANNEL_ID:
-        try:
-            await bot.send_message(
-                chat_id=settings.LOG_CHANNEL_ID,
-                text=(
-                    f"💰 <b>New Purchase Confirmed!</b>\n\n"
-                    f"• User: <code>{user_id}</code> (@{username or 'N/A'})\n"
-                    f"• Course: <b>{folder_title}</b>\n"
-                    f"• Plan: <b>{plan_label}</b> ({days}d)\n"
-                    f"• Amount: <code>{amount} {currency}</code> ({gateway})\n"
-                    f"• Ref: <code>{pay_ref}</code>"
+    # 5. Notify Log Channel & Superadmins
+    await send_admin_subscription_alert(
+        bot=bot,
+        user_id=user_id,
+        username=username,
+        full_name=full_name,
+        folder_title=folder_title,
+        plan_label=plan_label,
+        days=days,
+        amount=amount,
+        currency=currency,
+        gateway=gateway,
+        pay_ref=pay_ref,
+        valid_until=valid_until,
+        is_demo=False
+    )
+
+
+# ==========================================
+# Admin Payment Test Simulator (Zero Cost)
+# ==========================================
+
+@router.message(Command("testpay", "simulate_pay"))
+async def cmd_simulate_payment(message: Message):
+    """Admin-only payment simulator: Test full subscription workflow without real payment."""
+    if message.from_user.id not in settings.ADMIN_IDS:
+        return
+
+    folders = await FolderRepository.get_all_folders()
+    if not folders:
+        await message.reply("❌ No courses/folders exist. Create a course first via /admin.")
+        return
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    buttons = []
+    for f in folders:
+        f_title = f.get("title", "Course")
+        f_id = f.get("folder_id")
+        for p in f.get("plans", []):
+            p_id = p.get("plan_id")
+            p_label = p.get("label", "Plan")
+            p_price = p.get("price_inr", 0)
+            p_days = p.get("days", 30)
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"🧪 Test: {f_title[:15]} - {p_label} ({p_days}d - ₹{p_price})",
+                    callback_data=f"sim_pay:{f_id}:{p_id}"
                 )
-            )
-        except Exception:
-            pass
+            ])
+
+    buttons.append([InlineKeyboardButton(text="❌ Close", callback_data="back_catalog")])
+    await message.reply(
+        "🧪 <b>Payment Test Simulator (Zero Cost)</b>\n\n"
+        "Tap any plan below to simulate a successful payment instantly.\n"
+        "This will:\n"
+        "1. Generate your automated private single-use invite link\n"
+        "2. Record active subscription in database\n"
+        "3. Trigger real-time admin subscription notification\n"
+        "4. Schedule background expiry monitoring\n\n"
+        "👇 <i>Select a plan to test:</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
+@router.callback_query(F.data.startswith("sim_pay:"))
+async def cb_sim_pay(callback: CallbackQuery):
+    if callback.from_user.id not in settings.ADMIN_IDS:
+        await callback.answer("Unauthorized", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    folder_id = parts[1]
+    plan_id = parts[2]
+
+    folder = await FolderRepository.get_folder(folder_id)
+    if not folder:
+        await callback.answer("Folder not found.", show_alert=True)
+        return
+
+    plan = next((p for p in folder.get("plans", []) if p.get("plan_id") == plan_id), None)
+    if not plan:
+        await callback.answer("Plan not found.", show_alert=True)
+        return
+
+    user = callback.from_user
+    test_ref = f"test_{uuid.uuid4().hex[:10]}"
+
+    await callback.answer("🧪 Simulating successful payment...", show_alert=False)
+    await activate_access_for_user(
+        bot=callback.bot,
+        user_id=user.id,
+        folder=folder,
+        plan=plan,
+        amount=plan.get("price_inr", 0),
+        currency="INR",
+        gateway="simulator_test",
+        pay_ref=test_ref,
+        username=user.username,
+        full_name=user.full_name
+    )
 
 
 # ==========================================

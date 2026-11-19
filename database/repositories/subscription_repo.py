@@ -233,6 +233,40 @@ class SubscriptionRepository:
         return await cursor.to_list(length=100)
 
     @classmethod
+    async def get_active_premium_count(cls) -> int:
+        """Count active paid premium subscribers (excluding demos)."""
+        col = cls._collection()
+        now = datetime.now(timezone.utc)
+        return await col.count_documents({
+            "status": "active",
+            "valid_until": {"$gt": now},
+            "is_demo": {"$ne": True}
+        })
+
+    @classmethod
+    async def get_active_demo_count(cls) -> int:
+        """Count currently active demo trials running right now."""
+        col = cls._collection()
+        now = datetime.now(timezone.utc)
+        return await col.count_documents({
+            "status": "active",
+            "valid_until": {"$gt": now},
+            "is_demo": True
+        })
+
+    @classmethod
+    async def get_total_subscriptions_count(cls) -> int:
+        """Total paid subscriptions created all-time."""
+        col = cls._collection()
+        return await col.count_documents({"is_demo": {"$ne": True}})
+
+    @classmethod
+    async def get_expired_subscriptions_count(cls) -> int:
+        """Total expired paid subscriptions."""
+        col = cls._collection()
+        return await col.count_documents({"status": "expired", "is_demo": {"$ne": True}})
+
+    @classmethod
     async def get_active_subscriber_user_ids(cls) -> List[int]:
         """Get distinct user IDs with an active paid subscription."""
         col = cls._collection()

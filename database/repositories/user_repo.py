@@ -63,6 +63,12 @@ class UserRepository:
         return [d["user_id"] for d in docs if "user_id" in d]
 
     @classmethod
+    async def get_total_demo_claimed_count(cls) -> int:
+        """Count total users who have claimed the free demo."""
+        col = cls._collection()
+        return await col.count_documents({"has_used_demo": True})
+
+    @classmethod
     async def record_purchase(cls, user_id: int, amount_inr: float):
         """Update purchase stats for a user."""
         col = cls._collection()

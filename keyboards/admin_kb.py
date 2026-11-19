@@ -15,9 +15,46 @@ def build_admin_main_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📢 Broadcast Message", callback_data="adm_broadcast"),
-            InlineKeyboardButton(text="⚙️ Bot Header & Settings", callback_data="adm_settings")
+            InlineKeyboardButton(text="📣 Join Request Promo", callback_data="adm_join_promo")
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Bot Header & Settings", callback_data="adm_settings"),
+            InlineKeyboardButton(text="🧪 Test Payment", callback_data="adm_test_payment")
         ]
     ])
+
+
+def build_admin_join_promo_keyboard(promo_settings: Dict[str, Any]) -> InlineKeyboardMarkup:
+    """Keyboard for configuring external channel join request promotions."""
+    is_enabled = promo_settings.get("enabled", True)
+    is_auto = promo_settings.get("auto_approve", True)
+    has_banner = bool(promo_settings.get("banner_file_id"))
+
+    toggle_btn = "🔴 Turn OFF Promo" if is_enabled else "🟢 Turn ON Promo"
+    auto_btn = "⚡ Auto-Approve: ON" if is_auto else "⚡ Auto-Approve: OFF"
+    banner_btn = "🖼️ Change Banner" if has_banner else "🖼️ Add Banner Photo"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(text=toggle_btn, callback_data="adm_jp_toggle_enabled"),
+            InlineKeyboardButton(text=auto_btn, callback_data="adm_jp_toggle_auto")
+        ],
+        [
+            InlineKeyboardButton(text="📝 Edit Promo Text", callback_data="adm_jp_edit_text"),
+            InlineKeyboardButton(text=banner_btn, callback_data="adm_jp_set_banner")
+        ]
+    ]
+    if has_banner:
+        keyboard.append([
+            InlineKeyboardButton(text="🗑️ Remove Banner Photo", callback_data="adm_jp_del_banner")
+        ])
+    keyboard.append([
+        InlineKeyboardButton(text="👁️ Live Preview Post", callback_data="adm_jp_preview")
+    ])
+    keyboard.append([
+        InlineKeyboardButton(text="🔙 Back to Dashboard", callback_data="adm_main_menu")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def build_admin_folders_list(folders: List[Dict[str, Any]]) -> InlineKeyboardMarkup:

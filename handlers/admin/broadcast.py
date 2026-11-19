@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Dict, Any, List
 from aiogram import Router, F, Bot
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -55,8 +56,58 @@ def render_progress_bar(current: int, total: int, length: int = 12) -> str:
 
 
 # ==========================================
-# Audience Selection Menu
+# Audience Selection & Command Triggers
 # ==========================================
+
+@router.message(Command("broadcast", "bcast"))
+async def cmd_broadcast(message: Message, state: FSMContext):
+    """Admin command to start a broadcast directly or via reply."""
+    if not is_admin(message.from_user.id):
+        await message.reply("⛔ Unauthorized access.")
+        return
+
+    await state.clear()
+    reply = message.reply_to_message
+    if reply:
+        await state.update_data(
+            replied_chat_id=reply.chat.id,
+            replied_message_id=reply.message_id
+        )
+
+    all_users = len(await UserRepository.get_all_user_ids())
+    active_subs = len(await SubscriptionRepository.get_active_subscriber_user_ids())
+    expired_subs = len(await SubscriptionRepository.get_expired_subscriber_user_ids())
+    demo_users = len(await UserRepository.get_demo_user_ids())
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"🌐 All Users ({all_users})", callback_data="bcast_aud:all")
+        ],
+        [
+            InlineKeyboardButton(text=f"👑 Active Subscribers ({active_subs})", callback_data="bcast_aud:active"),
+            InlineKeyboardButton(text=f"⌛ Expired Subscribers ({expired_subs})", callback_data="bcast_aud:expired")
+        ],
+        [
+            InlineKeyboardButton(text=f"🎁 Demo Trial Users ({demo_users})", callback_data="bcast_aud:demo")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Cancel", callback_data="bcast_cancel")
+        ]
+    ])
+
+    reply_note = "\n\n📌 <i>Target message captured from your reply!</i>" if reply else ""
+    text = (
+        "📢 <b>Broadcast Control Center</b>\n\n"
+        "Select the target audience for your broadcast message:\n\n"
+        f"• 🌐 <b>All Users:</b> <code>{all_users:,}</code> (Full Bot Audience)\n"
+        f"• 👑 <b>Active Subscribers:</b> <code>{active_subs:,}</code> (Current Paid Members)\n"
+        f"• ⌛ <b>Expired Subscribers:</b> <code>{expired_subs:,}</code> (Win-Back / Renewal Offers)\n"
+        f"• 🎁 <b>Demo Trial Users:</b> <code>{demo_users:,}</code> (High-Intent Leads)"
+        f"{reply_note}\n\n"
+        "👇 <i>Choose an audience below to proceed:</i>"
+    )
+    await message.reply(text, reply_markup=kb)
+
 
 @router.callback_query(F.data == "adm_broadcast")
 async def cb_adm_broadcast(callback: CallbackQuery, state: FSMContext):
@@ -108,7 +159,7 @@ async def cb_adm_broadcast(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("bcast_aud:"))
 async def cb_bcast_aud(callback: CallbackQuery, state: FSMContext):
-    """Audience chosen, prompt for message."""
+    """Audience chosen, prompt for message or show preview if replied."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Unauthorized", show_alert=True)
         return
@@ -122,6 +173,64 @@ async def cb_bcast_aud(callback: CallbackQuery, state: FSMContext):
     }
     aud_label = audience_names.get(audience_key, "All Users")
 
+    data = await state.get_data()
+    replied_msg_id = data.get("replied_message_id")
+    replied_chat_id = data.get("replied_chat_id")
+
+    if replied_msg_id and replied_chat_id:
+        # User invoked /broadcast by replying to a message! Skip text prompt and show preview directly!
+        if audience_key == "active":
+            target_ids = await SubscriptionRepository.get_active_subscriber_user_ids()
+        elif audience_key == "expired":
+            target_ids = await SubscriptionRepository.get_expired_subscriber_user_ids()
+        elif audience_key == "demo":
+            target_ids = await UserRepository.get_demo_user_ids()
+        else:
+            target_ids = await UserRepository.get_all_user_ids()
+
+        total = len(target_ids)
+        if total == 0:
+            await state.clear()
+            await callback.message.reply(f"❌ There are 0 users in <b>{aud_label}</b>.")
+            await callback.answer()
+            return
+
+        await state.update_data(
+            bcast_chat_id=replied_chat_id,
+            bcast_message_id=replied_msg_id,
+            target_ids=target_ids,
+            aud_label=aud_label,
+            total=total,
+            should_pin=False
+        )
+        await state.set_state(BroadcastStates.waiting_for_confirmation)
+
+        pin_icon = "🔕 NO"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🚀 Start Broadcast Now", callback_data="bcast_start")
+            ],
+            [
+                InlineKeyboardButton(text=f"📌 Pin for Users: {pin_icon}", callback_data="bcast_toggle_pin")
+            ],
+            [
+                InlineKeyboardButton(text="❌ Cancel", callback_data="bcast_cancel")
+            ]
+        ])
+
+        await callback.message.reply(
+            "📋 <b>Broadcast Confirmation & Preview</b>\n\n"
+            f"• <b>Target Audience:</b> {aud_label}\n"
+            f"• <b>Total Recipients:</b> <code>{total:,}</code> users\n"
+            f"• <b>Pin Message:</b> <code>{pin_icon}</code>\n"
+            "• <b>Real-Time Progress:</b> ✅ Enabled\n\n"
+            "⚠️ <i>Target message captured from reply. Tap 'Start Broadcast Now' when ready:</i>",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+
+    # Normal flow: Ask admin to send the message
     await state.update_data(audience=audience_key, should_pin=False)
     await state.set_state(BroadcastStates.waiting_for_message)
 

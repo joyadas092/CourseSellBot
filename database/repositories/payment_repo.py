@@ -149,6 +149,30 @@ class PaymentRepository:
         return result.modified_count > 0
 
     @classmethod
+    async def get_paid_count(cls) -> int:
+        """Count total paid orders."""
+        col = cls._collection()
+        return await col.count_documents({"status": "paid"})
+
+    @classmethod
+    async def get_total_revenue_stats(cls) -> Dict[str, float]:
+        """Aggregate total revenue grouped by currency."""
+        col = cls._collection()
+        pipeline = [
+            {"$match": {"status": "paid"}},
+            {"$group": {"_id": "$currency", "total": {"$sum": "$amount"}}}
+        ]
+        result: Dict[str, float] = {}
+        try:
+            cursor = col.aggregate(pipeline)
+            async for doc in cursor:
+                curr = doc.get("_id") or "INR"
+                result[curr.upper()] = float(doc.get("total", 0.0))
+        except Exception:
+            pass
+        return result
+
+    @classmethod
     async def get_recent_payments(cls, limit: int = 50) -> List[Dict[str, Any]]:
         """Get latest payments for admin review."""
         col = cls._collection()
